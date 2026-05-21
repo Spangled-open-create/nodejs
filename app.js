@@ -1,21 +1,49 @@
 const express = require('express');
-const path = require('path');
-const indexRouter = require('./routes/index');
-
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Serve static files from the "public" directory
-app.use(express.static(path.join(__dirname, 'public')));
+// Stripe requires raw body for webhook verification
+app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body, sig, process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.log('Webhook signature failed:', err.message);
+    return res.status(400).send('Webhook Error: ' + err.message);
+  }
 
-// Use the router for handling routes
-app.use('/', indexRouter);
+  // Handle the events
+  switch (event.type) {
+    case 'payment_intent.succeeded':
+      const pi = event.data.object;
+      console.log('Payment succeeded:', pi.id, '$' + pi.amount / 100);
+      // TODO: unlock premium for user pi.metadata.userId
+      break;
+    case 'charge.succeeded':
+      console.log('Charge succeeded:', event.data.object.id);
+      break;
+    case 'checkout.session.completed':
+      const session = event.data.object;
+      console.log('Checkout complete:', session.id);
+      break;
+    case 'payment_intent.payment_failed':
+      console.log('Payment failed:', event.data.object.id);
+      break;
+    default:
+      console.log('Unhandled event:', event.type);
+  }
 
-// Catch-all route for handling 404 errors
-app.use((req, res, next) => {
-    res.status(404).sendFile(path.join(__dirname, 'views', '404.html'));
-  });
-
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}/`);
+  res.json({received: true});
 });
+
+// Health check
+app.get('/', express.json(), (req, res) => {
+  res.json({status: 'SpangledAI backend running', timestamp: new Date()});
+});
+
+app.use(express.json());
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log('Server running on port', PORT));

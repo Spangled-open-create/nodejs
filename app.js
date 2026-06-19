@@ -25,34 +25,47 @@ function initFirebase(){
 initFirebase();
 
 // ── IN-MEMORY STORE (fallback when Firebase unavailable) ─────────────────────
-let _memPassword   = '';
+// ADMIN_PASS env var = most reliable — persists across Railway restarts
+// _memPassword = set via API call — lost on restart unless Firebase saves it
+let _memPassword   = process.env.ADMIN_PASS || '';
 let eventQueue     = [];
 let approvedEvents = [];
 let teamMembers    = [];
 
 // ── HELPERS: read/write password via Firestore with memory fallback ───────────
 async function getAdminPassword(){
+  // 1. Memory first (set via API this session, or from ADMIN_PASS env var)
+  if(_memPassword) return _memPassword;
+  // 2. Firestore (persists across restarts if Firebase Admin is working)
   if(_fbDb){
     try {
       const doc = await _fbDb.collection('config').doc('adminAuth').get();
-      if(doc.exists && doc.data().password) return doc.data().password;
+      if(doc.exists && doc.data().password){
+        _memPassword = doc.data().password; // cache it
+        return _memPassword;
+      }
     } catch(e){ console.warn('getAdminPassword Firestore err:', e.message); }
   }
-  return _memPassword; // fallback
+  // 3. ADMIN_PASS env var (Railway Variable — most reliable)
+  return process.env.ADMIN_PASS || '';
 }
 
 async function setAdminPassword(password){
-  _memPassword = password; // always set memory
+  _memPassword = password; // always update memory cache
+  let firestoreOk = false;
   if(_fbDb){
     try {
       await _fbDb.collection('config').doc('adminAuth').set({
         password,
         updatedAt: _fbAdmin.firestore.FieldValue.serverTimestamp()
       });
-      return true;
+      firestoreOk = true;
+      console.log('Password saved to Firestore successfully');
     } catch(e){ console.warn('setAdminPassword Firestore err:', e.message); }
+  } else {
+    console.warn('Firebase not available — password in memory only (set ADMIN_PASS env var for persistence)');
   }
-  return false; // memory only
+  return firestoreOk;
 }
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
@@ -85,6 +98,18 @@ app.get('/', express.json(), (req, res) => {
   });
 });
 
+// ── DEBUG — check password state (remove in production) ──────────────────────
+app.get('/admin/debug', express.json(), requireAdmin, async (req, res) => {
+  const stored = await getAdminPassword();
+  res.json({
+    firebase:        !!_fbDb,
+    memoryPassword:  _memPassword ? '✓ set ('+_memPassword.length+' chars)' : '✗ empty',
+    firestoreCheck:  stored       ? '✓ found' : '✗ not found',
+    envAdminPass:    process.env.ADMIN_PASS ? '✓ set' : '✗ not set',
+    adminSecretSet:  process.env.ADMIN_SECRET ? '✓ set' : '✗ not set'
+  });
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // PASSWORD — persistent via Firestore, memory fallback
 // ═════════════════════════════════════════════════════════════════════════════
@@ -109,8 +134,12 @@ app.post('/admin/set-password', express.json(), requireAdmin, async (req, res) =
 app.post('/admin/check-password', express.json(), async (req, res) => {
   const { password } = req.body;
   const stored = await getAdminPassword();
+  console.log('check-password: stored='+(stored?'SET':'EMPTY')+
+    ' firebase='+(!!_fbDb)+' memPw='+(!!_memPassword)+
+    ' envPw='+(!!process.env.ADMIN_PASS));
   if(!stored)
-    return res.json({ ok:false, message:'⚠️ No password set. Open Ops Center → Access Codes → save Events Admin code.' });
+    return res.json({ ok:false,
+      message:'⚠️ No password set. In Railway → Variables, add ADMIN_PASS=YourPassword then redeploy.' });
   res.json({ ok: password === stored, message: '✗ Incorrect password.' });
 });
 

@@ -1,15 +1,19 @@
 {
-  "name": "nodejs-app",
+  "name": "spangledai-backend",
   "version": "1.0.1",
-  "description": "A minimal Node.js web application.",
+  "description": "SpangledAI backend — events queue, admin auth, Claude proxy, Stripe webhooks.",
   "main": "app.js",
-  "author": "alphasec",
+  "author": "SpangledAI",
   "license": "MIT",
   "dependencies": {
     "express": "^4.19.2",
-    "stripe": "^14.0.0"
+    "stripe": "^14.0.0",
+    "firebase-admin": "^12.0.0"
   },
   "scripts": {
     "start": "node app.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

@@ -609,9 +609,9 @@ app.get('/search-events', async (req, res) => {
 app.get('/ticketmaster-events', async (req, res) => {
   const city  = req.query.city  || '';
   const state = req.query.state || '';
-  const key   = process.env.TICKETMASTER_KEY || '';
+  const key   = process.env.TICKETMASTER_CONSUMER_KEY || process.env.TICKETMASTER_KEY || '';
   if(!key){
-    return res.json({ events:[], message:'Set TICKETMASTER_KEY in Railway Variables. Get free key at developer.ticketmaster.com' });
+    return res.json({ events:[], message:'Set TICKETMASTER_CONSUMER_KEY in Railway Variables.' });
   }
   try {
     const params = new URLSearchParams({

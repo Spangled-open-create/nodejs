@@ -602,6 +602,108 @@ app.get('/search-events', async (req, res) => {
   }
 });
 
+
+// GET /ticketmaster-events?city=Salt+Lake+City&state=UT
+// Requires TICKETMASTER_KEY in Railway Variables
+// Get free key at: developer.ticketmaster.com (instant, no approval)
+app.get('/ticketmaster-events', async (req, res) => {
+  const city  = req.query.city  || '';
+  const state = req.query.state || '';
+  const key   = process.env.TICKETMASTER_KEY || '';
+  if(!key){
+    return res.json({ events:[], message:'Set TICKETMASTER_KEY in Railway Variables. Get free key at developer.ticketmaster.com' });
+  }
+  try {
+    const params = new URLSearchParams({
+      apikey:          key,
+      keyword:         'July 4 fireworks independence',
+      city:            city,
+      stateCode:       state,
+      countryCode:     'US',
+      startDateTime:   '2026-07-01T00:00:00Z',
+      endDateTime:     '2026-07-05T23:59:59Z',
+      classificationName: 'Festival',
+      size:            '20'
+    });
+    const r = await fetch('https://app.ticketmaster.com/discovery/v2/events.json?'+params);
+    const d = await r.json();
+    const items = (d._embedded && d._embedded.events) || [];
+    const events = items.map(function(ev){
+      const venue = ev._embedded && ev._embedded.venues && ev._embedded.venues[0] || {};
+      const loc   = venue.location || {};
+      return {
+        id:      'tm_'+ev.id,
+        name:    ev.name || '',
+        city:    venue.city && venue.city.name || city,
+        state:   venue.state && venue.state.stateCode || state,
+        date:    ev.dates && ev.dates.start && ev.dates.start.localDate || 'July 4, 2026',
+        time:    ev.dates && ev.dates.start && ev.dates.start.localTime || '',
+        lat:     parseFloat(loc.latitude)  || null,
+        lng:     parseFloat(loc.longitude) || null,
+        type:    'Community Event',
+        desc:    ev.info || ev.pleaseNote || '',
+        website: ev.url || '',
+        source:  'Ticketmaster'
+      };
+    }).filter(function(e){ return e.lat && e.lng; });
+    res.json({ events, count: events.length, source:'Ticketmaster' });
+  } catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /local-events?state=UT — scrapes state America 250 pages
+// Supported: utah, texas, california, florida, new-york
+app.get('/local-events', async (req, res) => {
+  const state = (req.query.state||'').toLowerCase().replace(/\s+/g,'-');
+  const stateUrls = {
+    'ut': 'https://america250.utah.gov/celebrate/',
+    'utah': 'https://america250.utah.gov/celebrate/',
+    'tx': 'https://texas250.org/events/',
+    'fl': 'https://florida250.com/events',
+    'ca': 'https://california250.org/events',
+    'ny': 'https://america250ny.org/events'
+  };
+  const url = stateUrls[state];
+  if(!url){
+    return res.json({
+      events:[],
+      message:'State page not indexed yet. Supported: UT, TX, FL, CA, NY',
+      tip:'Submit events manually via the Admin → Manual Add for other states'
+    });
+  }
+  try {
+    const r = await fetch(url, {
+      headers:{'User-Agent':'SpangledAI/1.0 (patriotic event aggregator)'}
+    });
+    const html = await r.text();
+    // Extract event data from common HTML patterns
+    // Most state pages use structured event listings
+    const events = [];
+    // Match common event title patterns
+    const titleMatches = html.match(/<h[23][^>]*>([^<]{10,80})<\/h[23]>/gi)||[];
+    titleMatches.slice(0,10).forEach(function(m,i){
+      const title = m.replace(/<[^>]+>/g,'').trim();
+      if(title.length > 5){
+        events.push({
+          id:     'local_'+state+'_'+i,
+          name:   title,
+          city:   '',
+          state:  state.toUpperCase(),
+          date:   'July 4, 2026',
+          type:   'America 250',
+          source: 'State page',
+          note:   'Verify details at '+url
+        });
+      }
+    });
+    res.json({ events, count: events.length, source: url,
+      note:'Coordinates not available from scrape — admin must verify and add lat/lng via Manual Add' });
+  } catch(e){
+    res.status(500).json({ error: e.message, url });
+  }
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // CLAUDE PROXY
 // ═════════════════════════════════════════════════════════════════════════════

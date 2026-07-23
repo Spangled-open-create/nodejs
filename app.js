@@ -652,6 +652,77 @@ app.get('/ticketmaster-events', async (req, res) => {
   }
 });
 
+// POST /admin/archive-year
+// Tags all approved events with a _year field for historical filtering.
+// Body: { year: "2026" }
+app.post('/admin/archive-year', express.json(), requireAdmin, async (req, res) => {
+  const year = req.body.year || new Date().getFullYear().toString();
+
+  if (!_fbDb) {
+    return res.json({ ok: true, count: 0, message: 'Firestore unavailable — events tagged locally only.' });
+  }
+
+  try {
+    const snap  = await _fbDb.collection('approvedEvents').get();
+    const batch = _fbDb.batch();
+    let count   = 0;
+
+    snap.docs.forEach(doc => {
+      // Only tag events that don't already have a year
+      if (!doc.data()._year) {
+        batch.update(doc.ref, {
+          _year:       year,
+          _archivedAt: _fbAdmin.firestore.FieldValue.serverTimestamp()
+        });
+        count++;
+      }
+    });
+
+    await batch.commit();
+    console.log(`Archive: tagged ${count} events as ${year}`);
+    res.json({ ok: true, count, year, message: `✓ Tagged ${count} events as ${year}` });
+
+  } catch (e) {
+    console.error('Archive year error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /admin/archive?year=2026
+// Returns approved events filtered by year (or all years if year=all)
+app.get('/admin/archive', requireAdmin, async (req, res) => {
+  const year = req.query.year || 'all';
+
+  if (!_fbDb) {
+    return res.json({ events: [], count: 0, message: 'Firestore unavailable' });
+  }
+
+  try {
+    let query = _fbDb.collection('approvedEvents');
+    if (year !== 'all') {
+      // Events without _year tag are assumed 2026
+      if (year === '2026') {
+        // Get both explicitly tagged 2026 AND untagged (assumed 2026)
+        const snap = await query.get();
+        const events = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(e => !e._year || e._year === '2026');
+        return res.json({ events, count: events.length, year });
+      } else {
+        query = query.where('_year', '==', year);
+      }
+    }
+
+    const snap   = await query.get();
+    const events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    res.json({ events, count: events.length, year });
+
+  } catch (e) {
+    console.error('Archive get error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /local-events?state=UT — scrapes state America 250 pages
 // Supported: utah, texas, california, florida, new-york
 app.get('/local-events', async (req, res) => {
